@@ -1,0 +1,7 @@
+When a thread is created, an array of active values checks to see if there is a free slot for a new thread (i.e., there aren't 128 active threads). If so, the thread is initialized: its registers (PC, SP), as well as its stack of size 32767 bytes. If this is the first thread to be created, we move to intialize_sys(), which sets up the timer interrupts every 50ms that direct us to the scheduler, and intializes the 0th active thread values for our main thread. 
+
+Then, we go to the scheduler immediately every time a thread is created. Every time the scheduler is about to leave the main thread, it clears the stack space of any other exited threads. The scheduler then uses round robin to find out the next thread that is ready to be executed. If this is the first time this thread is ready, the stack pointer and PC are set, and the status is changed from FIRST_READY to READY. Then we unblock the timer, and switch the thread context to this next ready thread.
+
+pthread_exit() is the return address at the top of the stack, so when the start_routine of the thread is done executing, it goes straight to pthread_exit(), which blocks the timer interrupt so we can then set the status to EXITED, then UNUSED, and free its stack space and slot in the array of active flags. We also decrement the number of active threads, then go back to the scheduler().
+
+pthread_self() consists of returning the pthread_t value of the global value of the current thread.
