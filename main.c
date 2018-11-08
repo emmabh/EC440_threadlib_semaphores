@@ -26,7 +26,7 @@ long i;
     val++;
   }
 
- printf("I, %x, have finally incremented val to %d\n", (unsigned int)pthread_self(), val);
+ printf("I, %x, have finally incremented val to %ld\n", (unsigned int)pthread_self(), val);
  sem_post(arg);
  printf("I, %x, have returned the lock\n", (unsigned int)pthread_self());
  

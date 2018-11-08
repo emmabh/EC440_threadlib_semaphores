@@ -286,23 +286,19 @@ void pthread_exit(void *value_ptr){
 
 }
 
-int pthread_join(pthread_t thread, void **value_ptr){
 
-	value_ptr = &allThreads[thread].exit_status;
 
-	//The calling thread must block until the target thread terminates
-	if(allThreads[thread].join_id == -1 && allThreads[thread].status != UNUSED && allThreads[thread].status != EXITED){
-		allThreads[currThread].prevStatus = allThreads[currThread].status;
-		allThreads[currThread].status = BLOCKED;
-
-		//Intialize the join id for the target
-		allThreads[thread].join_id = allThreads[currThread].id;
-
-		//Schedule
-		scheduler();
-	}
-
-	return 0;
+static int ptr_mangle(int p)
+{
+    unsigned int ret;
+    asm(" movl %1, %%eax;\n"
+        " xorl %%gs:0x18, %%eax;" " roll $0x9, %%eax;"
+        " movl %%eax, %0;"
+        : "=r"(ret)
+        : "r"(p)
+        : "%eax"
+        );
+    return ret;
 }
 /*-------------------- PROJECT 3-------------------------*/
 void lock(){
@@ -325,22 +321,36 @@ void pthread_exit_wrapper()
     unsigned int res;
     asm("movl %%eax, %0\n":"=r"(res)); 
     pthread_exit((void *) res);
+
 }
 
+int pthread_join(pthread_t thread, void **value_ptr){
 
+	if(value_ptr != NULL && allThreads[thread].join_id == -1){
+		value_ptr = &allThreads[thread].exit_status;
+	}
 
-static int ptr_mangle(int p)
-{
-    unsigned int ret;
-    asm(" movl %1, %%eax;\n"
-        " xorl %%gs:0x18, %%eax;" " roll $0x9, %%eax;"
-        " movl %%eax, %0;"
-        : "=r"(ret)
-        : "r"(p)
-        : "%eax"
-        );
-    return ret;
+	//The calling thread must block until the target thread terminates
+	if(allThreads[thread].join_id == -1 && allThreads[thread].status != UNUSED && allThreads[thread].status != EXITED){
+		allThreads[currThread].prevStatus = allThreads[currThread].status;
+		allThreads[currThread].status = BLOCKED;
+
+		//Intialize the join id for the target
+		allThreads[thread].join_id = allThreads[currThread].id;
+
+		//Schedule
+		scheduler();
+
+		allThreads[thread].join_id = -1;
+
+		return 0;
+	}else if(allThreads[thread].join_id == -1){
+		return 0;	
+	}else{
+		return -1;
+	}
 }
+
 
 int sem_init(sem_t *sem, int pshared, unsigned value){
 	lock();
@@ -391,8 +401,6 @@ int sem_wait(sem_t *sem){
 		unlock();
 		return 1;
 	}else{
-		printf("I %d am about to start waiting\n", currThread);
-		//allSems[sem->__align].value++;
 		//enqueue the calling thread
 		enqueue(allSems[sem->__align].q, pthread_self());
 
@@ -406,17 +414,17 @@ int sem_wait(sem_t *sem){
 		//Force a signal to go to scheduler
 		raise(SIGALRM);
 
-		printf("I %d am done waiting\n", currThread);
-
 		return 0;
 	}
 }
 
 int sem_post(sem_t *sem){
 	lock();
-	allSems[sem->__align].value++;
 
-	if(allSems[sem->__align].value > 0){
+	if(allSems[sem->__align].value >= 0 ){
+		//Increment
+		allSems[sem->__align].value++;
+
 		//If any processes are in this semaphore's queue, wake the next one up, dequeue reset its state, go back to wait
 		if(allSems[sem->__align].q->length > 0){
 			pthread_t next = dequeue(allSems[sem->__align].q);
@@ -426,25 +434,30 @@ int sem_post(sem_t *sem){
 			//RE LOCK the semaphore
 			allSems[sem->__align].value--;
 
-			unlock();
-
-			return 0;
-
 		}
+
+		unlock();
+		return 0;
+	}else{
+		printf("ERROR: Trying to post a semaphore that has not yet been obtained\n");
+		unlock();
+		return 1;
 	}
 
-	unlock();
-	return 1;
 }
 
 int sem_destroy(sem_t *sem){
 	lock();
-	if(allSems[sem->__align].q->length > 0){
+	if(allSems[sem->__align].q->length > 0 && allSems[sem->__align].initFlag == 1){
 		printf("ERROR: Undefined behavior, threads waiting for this semaphore\n");
+		unlock();
+		return -1;
 	}
 
 	if(allSems[sem->__align].initFlag == 0){
 		printf("ERROR: Destroying a semaphore that has not been initialized\n");
+		unlock();
+		return -1;
 	}
 
 	allSems[sem->__align].initFlag = 0;
@@ -455,6 +468,8 @@ int sem_destroy(sem_t *sem){
 
 
 }
+
+/*---------------QUEUE FUNCTIONS-----------------------*/
 
 void enqueue(struct threadQueue* q, pthread_t thread){
 	struct threadNode *n = (struct threadNode*)malloc(sizeof(struct threadNode));
